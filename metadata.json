@@ -1,0 +1,6 @@
+{
+  "name": "Kernel X",
+  "description": "Central avançada de monitoramento, gerenciamento e administração do sistema Android com terminal e integração Termux.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
