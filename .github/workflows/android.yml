@@ -24,8 +24,10 @@ jobs:
 
       - name: Install required Android SDK packages
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager --install "platforms;android-36.1" "build-tools;36.0.0" "platform-tools"
+          sdkmanager_path="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$sdkmanager_path"
+          yes | "$sdkmanager_path" --licenses
+          "$sdkmanager_path" --install "platforms;android-36.1" "build-tools;36.0.0" "platform-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
