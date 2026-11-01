@@ -1,4 +1,4 @@
-name: Build KERNEL X APK
+name: Build and validate KERNEL X APK
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -22,18 +22,73 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android SDK packages
+        run: sdkmanager --install "platforms;android-36.1" "build-tools;36.0.0" "platform-tools"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Build debug APK
+      - name: Clean and build debug APK
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --max-workers=2
+          chmod +x ./gradlew
+          ./gradlew clean assembleDebug --no-daemon --max-workers=2
 
-      - name: Upload APK
+      - name: Validate APK integrity, alignment, signature, manifest, and ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+
+          echo "APK size: $(stat -c '%s bytes' "$apk")"
+          sha256sum "$apk"
+          unzip -t "$apk"
+
+          build_tools="$ANDROID_HOME/build-tools/36.0.0"
+          "$build_tools/zipalign" -c -P 16 -v 4 "$apk"
+          signature="$("$build_tools/apksigner" verify --verbose --print-certs "$apk")"
+          printf '%s\n' "$signature"
+          grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"$signature"
+
+          badging="$("$build_tools/aapt" dump badging "$apk")"
+          printf '%s\n' "$badging"
+          grep -F "package: name='com.aistudio.kernelx.sysctl'" <<<"$badging"
+          grep -F "sdkVersion:'24'" <<<"$badging"
+          grep -F "targetSdkVersion:'36'" <<<"$badging"
+
+          echo "Native libraries (empty means Android-managed code only):"
+          native_libs="$(unzip -Z1 "$apk" | grep -E '^lib/[^/]+/[^/]+\.so$' || true)"
+          if [[ -n "$native_libs" ]]; then
+            printf '%s\n' "$native_libs"
+            grep -q '^lib/arm64-v8a/' <<<"$native_libs"
+            unexpected_abis="$(printf '%s\n' "$native_libs" | sed -E 's#^lib/([^/]+)/.*#\1#' | sort -u | grep -Ev '^(arm64-v8a|armeabi-v7a|x86|x86_64)$' || true)"
+            if [[ -n "$unexpected_abis" ]]; then
+              echo "Unsupported native ABI directory found: $unexpected_abis" >&2
+              exit 1
+            fi
+          else
+            echo "No native libraries packaged; APK is not ABI-restricted."
+          fi
+
+      - name: Upload validated APK
         uses: actions/upload-artifact@v4
         with:
           name: KERNEL-X-debug-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish verified APK release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_PATH: app/build/outputs/apk/debug/app-debug.apk
+        run: |
+          tag="verified-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" "$APK_PATH" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "KERNEL X verified APK ${GITHUB_RUN_NUMBER}" \
+            --notes "Built from commit ${GITHUB_SHA}. APK integrity, alignment, signature, manifest, SDK levels, and native ABI checks passed."
