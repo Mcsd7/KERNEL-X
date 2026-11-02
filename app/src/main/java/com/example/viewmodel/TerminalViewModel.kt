@@ -26,6 +26,7 @@ data class TerminalUiState(
   val currentDirectory: String = "",
   val termuxStatus: TermuxInstallStatus = TermuxInstallStatus.NOT_INSTALLED,
   val commandHistory: List<String> = emptyList(),
+  val termuxForegroundSession: Boolean = false,
   val showTermuxSetupDialog: Boolean = false,
   val showCopyFeedback: Boolean = false
 )
@@ -156,15 +157,25 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
         )
       } else {
         // Termux RUN_COMMAND Bridge
-        val dispatchResult = termuxManager.executeInTermux(cmd, runInBackground = true)
+        val isForeground = _uiState.value.termuxForegroundSession
+        val dispatchResult = termuxManager.executeInTermux(cmd, runInBackground = !isForeground)
         dispatchResult.onSuccess { msg ->
           appendLine(TerminalLine(text = ">> $msg", type = TerminalLineType.SYSTEM_INFO))
-          appendLine(
-            TerminalLine(
-              text = "Aguardando resposta do Termux via PendingIntent callback...",
-              type = TerminalLineType.STDOUT
+          if (isForeground) {
+            appendLine(
+              TerminalLine(
+                text = ">> Abrindo sessão interativa em primeiro plano no Termux para '$cmd'...",
+                type = TerminalLineType.SUCCESS
+              )
             )
-          )
+          } else {
+            appendLine(
+              TerminalLine(
+                text = "Aguardando resposta do Termux via PendingIntent callback...",
+                type = TerminalLineType.STDOUT
+              )
+            )
+          }
         }.onFailure { err ->
           appendLine(
             TerminalLine(
@@ -183,6 +194,14 @@ class TerminalViewModel(application: Application) : AndroidViewModel(application
 
       _uiState.value = _uiState.value.copy(isExecuting = false)
     }
+  }
+
+  fun toggleTermuxForegroundSession(isForeground: Boolean) {
+    _uiState.value = _uiState.value.copy(termuxForegroundSession = isForeground)
+  }
+
+  fun openTermuxApp(): Boolean {
+    return termuxManager.openTermuxApp()
   }
 
   fun clearTerminal() {
